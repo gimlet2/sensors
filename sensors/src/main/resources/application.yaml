@@ -2,13 +2,13 @@ spring:
   main:
     banner-mode: "off"
   application:
-    name: aggregator
+    name: sensors
   kafka:
     consumer:
-      group-id: aggregator
+      group-id: sensors
       auto-offset-reset: earliest
     bootstrap-servers: localhost:9092
-topic:
-  income: measurments
-  outcome: over_heated
-heatLimit: 95.0
+    template:
+      default-topic: measurments
+server:
+  contextPath: /api/v1

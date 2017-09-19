@@ -2,10 +2,12 @@ package com.restmonkeys.agregator
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.common.serialization.Serdes
 import org.apache.kafka.streams.StreamsConfig
 import org.apache.kafka.streams.kstream.KStream
 import org.apache.kafka.streams.kstream.KStreamBuilder
+import org.apache.kafka.streams.kstream.TimeWindows
 import org.apache.kafka.streams.processor.WallclockTimestampExtractor
 import org.springframework.beans.factory.FactoryBean
 import org.springframework.beans.factory.annotation.Value
@@ -24,6 +26,11 @@ fun main(args: Array<String>) {
 @SpringBootApplication
 @EnableKafka
 class AggregatorApplication {
+
+    companion object {
+        const val HOUR: Long = 3600000
+    }
+
     @Bean(name = arrayOf(KafkaStreamsDefaultConfiguration.DEFAULT_STREAMS_CONFIG_BEAN_NAME))
     fun kStreamsConfigs(@Value("\${spring.kafka.consumer.group-id}") applicationId: String,
                         @Value("\${spring.kafka.bootstrap-servers}") bootstrapServers: String): StreamsConfig {
@@ -34,6 +41,9 @@ class AggregatorApplication {
 //        props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.serdeFrom(JsonSerializer<Measurement>(), JsonDeserializer<Measurement>(Measurement::class.java)).javaClass.name)
         props.put(StreamsConfig.DEFAULT_TIMESTAMP_EXTRACTOR_CLASS_CONFIG, WallclockTimestampExtractor::class.java.name)
         props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
+        props.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 500)
+        props.put(StreamsConfig.APPLICATION_SERVER_CONFIG, "localhost:8080")
+
         return StreamsConfig(props)
     }
 
@@ -50,7 +60,13 @@ class AggregatorApplication {
         val objectMapper = ObjectMapper()
         objectMapper.registerKotlinModule()
         val stream = myKStreamBuilder.stream<String, String>(topicIn)
-        stream.mapValues { objectMapper.readValue(it, Measurement::class.java) }
+        val mapped = stream.mapValues { objectMapper.readValue(it, Measurement::class.java) }
+
+        mapped.groupByKey(Serdes.String(), JsonPOJOSerde(Measurement::class.java)).reduce({ a, b -> Measurement(a.temperature + b.temperature / 2) }, TimeWindows.of(HOUR), "hour").toStream()
+        mapped.groupByKey(Serdes.String(), JsonPOJOSerde(Measurement::class.java)).reduce({ a, b -> Measurement(a.temperature + b.temperature / 2) }, TimeWindows.of(HOUR * 24 * 7), "week")
+        mapped.groupByKey(Serdes.String(), JsonPOJOSerde(Measurement::class.java)).reduce({ a, b -> Measurement(Math.max(a.temperature, b.temperature)) }, TimeWindows.of(HOUR * 24 * 30), "max")
+
+        mapped
                 .mapValues { if (it.temperature > limit) "1" else "-1" }
                 .groupByKey()
                 .reduce({ a, b ->
@@ -70,5 +86,6 @@ class AggregatorApplication {
         return stream
     }
 }
+
 
 data class Measurement(val temperature: Double)
